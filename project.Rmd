@@ -1,0 +1,134 @@
+---
+title: "Qualitative Activity Recognition of Weight Lifting Exercises."
+output: html_document
+---
+### Executive Summary  
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. This submission makes use data from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants and attempt to predict the manner in which they did the exercise. 
+
+###Data Processing
+
+Lets set some global option for knitr
+
+```{r global_options}
+knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='Figs/',
+                      warning=FALSE, message=FALSE,cache=TRUE)
+```
+
+Load packages used for the analysis.
+```{r warning=FALSE,message=FALSE}
+set.seed(1234)
+library(caret)
+library(lda)
+``` 
+#### Loading the data
+
+The Dataset contains measurements from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The goal of this project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset)
+
+The training data for this project are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+
+Lets load the downloaded data into R
+
+```{r cchunk1}
+
+trainingAll<-read.csv("pml-training.csv")
+testingAll<-read.csv("pml-testing.csv")
+
+``` 
+
+#### Exploratory Analysis
+Let's explore the data that is loaded:
+```{r cchunk2}
+dim(trainingAll)
+dim(testingAll)
+str(trainingAll)
+``` 
+There are `r nrow(trainingAll)` rows in the training dataset.Column[,1:7] can be dropped as they add no information to the model, since they being sample labels and have zero variance. As we can see there are lot of NAs in the data .As a thumb rule lets drop columns with more than 50% values as NAs. 
+
+```{r cchunk3}
+
+trainingAll1<-subset(trainingAll,select =-c(1:7))
+testingAll1<-subset(testingAll,select =-c(1:7))
+# Get rid of colums with more than 50% NAs
+trainingAll2<-trainingAll1[, colSums(is.na(trainingAll1)) < nrow(trainingAll1) * 0.5]
+dim(trainingAll2)
+sum(is.na(trainingAll2))
+
+```
+Now there is no NA in the data. Lets explore the predictors for zero or near zero variance (nzv) and filter out nzv predictors. Test dataset is also filtered accordingly. Following code segment achieves the same.
+
+```{r cchunk4}
+#remove all nzv columns
+nzvTraining<-nzv(trainingAll2,saveMetrics = TRUE)
+trainingAll3<-trainingAll2[,nzvTraining$nzv==FALSE]
+testing<-testingAll1[,names(trainingAll3)[1:52]]
+```
+
+Lets build a training set and cross validation test set from the training set.80% of the data is taken into test set and rest goes into cross validation dataset.
+
+```{r cchunk5}
+#builds training and cross validation test data
+inBuild <- createDataPartition(y=trainingAll3$classe,p=0.8, list=FALSE)
+training<-trainingAll3[inBuild,]
+cvTest<-trainingAll3[-inBuild,]
+
+```
+### Prediction Modelling
+Here we are going to consider linear discriminant analysis(LDA) and random forest algorithm to build the prediction model. The final model will be selected based on accuracy.
+
+
+####Model building with Linear Discriminant Analysis (LDA)
+
+First, parallel processing has to be enabled to improve system performance. Library (parallel) and library (doParallel) is made use of to implement the same. Then train control object is set such that k fold cross validation with fold number=3 method is selected.
+
+```{r cchunk6}
+
+#set parallel processing
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+#set train control object for k-fold cross validation and parallel processing
+ctrl<- trainControl(method = "cv",number = 3,verboseIter=F,allowParallel = TRUE)
+#fit a linear disriminant model
+modLDA<-train(classe ~ .,method="lda",data=training,trControl=ctrl)
+#stop parallel procssing cluster
+stopCluster(cluster)
+#compare accuracy of the model against cross validation data set
+confusionMatrix(cvTest$classe,predict(modLDA,cvTest))
+
+``` 
+
+Lda model offers poor accuracy (70%), as can be seen from the above confusion matrix. Let's build a second model with random forest algorithm and see the accuracy.
+
+```{r cchunk7}
+#set parallel processing
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+#set train control object for k-fold cross validation and parallel processing
+ctrl<- trainControl(method = "cv",number = 3,verboseIter=F,allowParallel = TRUE)
+#fit a linear disriminant model
+modRF<-train(classe ~ .,method="rf",data=training,trControl=ctrl)
+#stop parallel procssing cluster
+stopCluster(cluster)
+#compare accuracy of the model against cross validation data set
+confusionMatrix(cvTest$classe,predict(modRF,cvTest))
+``` 
+By comparing the accuracy of two model, random forest based model offer 99.2% accuracy with a reasonable processing time when parallel processing is enabled. Out of sample error can be assessed by randomForest(..., do.trace=T) function call.
+
+#### Prediction of the test data
+
+The test data can be predicted using the rf based model.
+```{r cchunk8}
+#predicting the test set
+predict(modRF,testing)
+``` 
+###Conclusion
+A random forest based model with k-th fold (k=3) cross validation is built to predict the test data set. This model offer far superior accuracy compared to model based on LDA.
